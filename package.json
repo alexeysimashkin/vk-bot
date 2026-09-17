@@ -1,13 +1,14 @@
 {
-  "name": "vk-bot-smh",
+  "name": "vk-max-bot-smh",
   "version": "1.0.0",
-  "description": "ВК-бот аэропорта Симашкино",
-  "main": "bot.js",
+  "description": "Боты ВК и MAX для аэропорта Симашкино",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "start:max": "node max-bot.js"
   },
   "dependencies": {
     "vk-io": "^4.9.0",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "https-proxy-agent": "^7.0.2"
   }
 }
