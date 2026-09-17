@@ -1,4 +1,4 @@
-const { VK } = require('vk-io');
+const { VK, Keyboard } = require('vk-io');
 const axios = require('axios');
 
 // ============ НАСТРОЙКИ ============
@@ -69,23 +69,17 @@ ${statusEmoji} Статус: ${(f.statusText || 'По расписанию').rep
 
 // Клавиатура с выбором даты
 function getDateKeyboard() {
-  return {
-    inline: true,
-    buttons: [
-      [{ action: { type: 'text', label: '📅 Сегодня', payload: JSON.stringify({ cmd: 'date', value: 'today' }) }, color: 'primary' }],
-      [{ action: { type: 'text', label: '📅 Завтра', payload: JSON.stringify({ cmd: 'date', value: 'tomorrow' }) }, color: 'primary' }]
-    ]
-  };
+  return Keyboard.builder()
+    .inline()
+    .textButton({ label: '📅 Сегодня', payload: { cmd: 'date', value: 'today' }, color: Keyboard.PRIMARY_COLOR })
+    .textButton({ label: '📅 Завтра', payload: { cmd: 'date', value: 'tomorrow' }, color: Keyboard.PRIMARY_COLOR });
 }
 
 // Клавиатура "Выбрать дату заново"
 function getBackKeyboard() {
-  return {
-    inline: true,
-    buttons: [
-      [{ action: { type: 'text', label: '🔄 Выбрать другую дату', payload: JSON.stringify({ cmd: 'back' }) }, color: 'secondary' }]
-    ]
-  };
+  return Keyboard.builder()
+    .inline()
+    .textButton({ label: '🔄 Выбрать другую дату', payload: { cmd: 'back' }, color: Keyboard.SECONDARY_COLOR });
 }
 
 // Поиск рейсов
@@ -112,7 +106,7 @@ vk.updates.on('message_new', async (context) => {
       userStates[userId] = { step: 'search', date: payload.value };
       await context.send({
         message: `🔎 Выбрана дата: ${payload.value === 'today' ? 'Сегодня' : 'Завтра'}\n\nВведите номер рейса, город или код ИАТА (например: SU-1234, Москва, SVO):`,
-        keyboard: getBackKeyboard()
+        keyboard: getBackKeyboard().toString()
       });
       return;
     }
@@ -120,7 +114,7 @@ vk.updates.on('message_new', async (context) => {
       userStates[userId] = { step: 'date' };
       await context.send({
         message: '📅 Выберите дату:',
-        keyboard: getDateKeyboard()
+        keyboard: getDateKeyboard().toString()
       });
       return;
     }
@@ -128,11 +122,11 @@ vk.updates.on('message_new', async (context) => {
 
   // Команды
   const lowerText = text.toLowerCase();
-  if (lowerText === 'начать' || lowerText === 'start' || lowerText === 'привет' || lowerText === 'меню') {
+  if (lowerText === 'начать' || lowerText === 'start' || lowerText === '/start' || lowerText === 'привет' || lowerText === 'меню') {
     userStates[userId] = { step: 'date' };
     await context.send({
       message: `👋 Добро пожаловать в бота информации о статусе рейсов в аэропорту "Симашкино".\n\nПожалуйста, выберите в кнопке ниже дату, на которую вас интересует статус рейса.`,
-      keyboard: getDateKeyboard()
+      keyboard: getDateKeyboard().toString()
     });
     return;
   }
@@ -140,11 +134,10 @@ vk.updates.on('message_new', async (context) => {
   // Проверяем состояние
   const state = userStates[userId];
   if (!state || state.step !== 'search') {
-    // Не знаем что делать — показываем приветствие
     userStates[userId] = { step: 'date' };
     await context.send({
       message: `👋 Добро пожаловать в бота информации о статусе рейсов в аэропорту "Симашкино".\n\nПожалуйста, выберите в кнопке ниже дату, на которую вас интересует статус рейса.`,
-      keyboard: getDateKeyboard()
+      keyboard: getDateKeyboard().toString()
     });
     return;
   }
@@ -158,7 +151,7 @@ vk.updates.on('message_new', async (context) => {
     if (found.length === 0) {
       await context.send({
         message: `😔 К сожалению, рейс «${text}» не найден.\n\nПопробуйте ввести другой номер рейса, город или код ИАТА:`,
-        keyboard: getBackKeyboard()
+        keyboard: getBackKeyboard().toString()
       });
       return;
     }
@@ -173,13 +166,13 @@ vk.updates.on('message_new', async (context) => {
 
     await context.send({
       message: msg,
-      keyboard: getBackKeyboard()
+      keyboard: getBackKeyboard().toString()
     });
   } catch (e) {
     console.error('Ошибка запроса:', e.message);
     await context.send({
       message: '⚠️ Произошла ошибка при получении данных. Попробуйте позже.',
-      keyboard: getBackKeyboard()
+      keyboard: getBackKeyboard().toString()
     });
   }
 });
