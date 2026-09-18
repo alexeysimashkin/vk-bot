@@ -7,22 +7,16 @@ const API_URL = 'https://ar-smh.ru/api/flights';
 
 const vk = new VK({ token: VK_TOKEN });
 
-// Хранилище состояний пользователей
+// Хранилище состояний
 const userStates = {};
 
-// Хранилище подписок: { userId: { flightId: { status, flightNumber, ... } } }
+// Хранилище подписок: { userId: { flightId: true } }
 const subscriptions = {};
 
-// Хранилище последних известных статусов: { flightId: status }
-const lastStatuses = {};
+// Хранилище последних известных состояний рейсов: { flightId: { status, expected } }
+const lastFlightStates = {};
 
 // ============ ФУНКЦИИ ============
-function getSamaraNow() {
-  const now = new Date();
-  const utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
-  return new Date(utcMs + (4 * 3600000));
-}
-
 function fmtTm(s) {
   if (!s) return '—';
   const d = new Date(s);
@@ -51,18 +45,12 @@ function getStatusEmoji(status) {
   return '⚪';
 }
 
-// Формируем сообщение о рейсе
 function buildFlightMessage(f) {
   const delayed = f.expectedDeparture && new Date(f.expectedDeparture) > new Date(f.scheduledDeparture);
   const statusEmoji = getStatusEmoji(f.statusText);
-
   let timeStr;
-  if (delayed) {
-    timeStr = `${fmtTm(f.scheduledDeparture)} ➡️ ${fmtTm(f.expectedDeparture)}`;
-  } else {
-    timeStr = fmtTm(f.scheduledDeparture);
-  }
-
+  if (delayed) timeStr = `${fmtTm(f.scheduledDeparture)} ➡️ ${fmtTm(f.expectedDeparture)}`;
+  else timeStr = fmtTm(f.scheduledDeparture);
   const departure = f.expectedDeparture || f.scheduledDeparture;
 
   return `✈️ Рейс: ${f.flightNumber}, ${f.airline}
@@ -72,7 +60,6 @@ function buildFlightMessage(f) {
 ${statusEmoji} Статус: ${(f.statusText || 'По расписанию').replace(/\n/g, ' ')}`;
 }
 
-// Формируем уведомление по типу статуса
 function buildNotification(f, statusType) {
   const flight = f.flightNumber || '';
   const city = f.destination || '';
@@ -82,85 +69,22 @@ function buildNotification(f, statusType) {
 
   switch (statusType) {
     case 'checkin':
-      return `👋 Уважаемый пассажир!
-
-Начинается регистрация на рейс ${flight} вылетающий в ${city} (${iata}). Стойки регистрации: ${counters}
-
-📄 Не забудьте приготовить документ, удостоверяющий личность!`;
-
+      return `👋 Уважаемый пассажир!\n\nНачинается регистрация на рейс ${flight} вылетающий в ${city} (${iata}). Стойки регистрации: ${counters}\n\n📄 Не забудьте приготовить документ, удостоверяющий личность!`;
     case 'checkin_completed':
-      return `👋 Уважаемый пассажир!
-
-Регистрация на рейс ${flight}, вылетающий в ${city} (${iata}), закончена.
-
-🚶 Посадка на рейс начнётся через несколько минут, выход G${gate}`;
-
+      return `👋 Уважаемый пассажир!\n\nРегистрация на рейс ${flight}, вылетающий в ${city} (${iata}), закончена.\n\n🚶 Посадка на рейс начнётся через несколько минут, выход G${gate}`;
     case 'boarding':
-      return `👋 Уважаемый пассажир!
-
-Начинается посадка на рейс ${flight} вылетающий в ${city} (${iata}).
-
-🚪 Приглашаем вас пройти к выходу G${gate}. Приготовьте, пожалуйста, паспорт и посадочный талон. Желаем приятного полёта! ✈️`;
-
+      return `👋 Уважаемый пассажир!\n\nНачинается посадка на рейс ${flight} вылетающий в ${city} (${iata}).\n\n🚪 Приглашаем вас пройти к выходу G${gate}. Приготовьте, пожалуйста, паспорт и посадочный талон. Желаем приятного полёта! ✈️`;
     case 'boarding_completed':
-      return `👋 Уважаемый пассажир!
-
-Закончилась посадка на рейс ${flight} вылетающий в ${city} (${iata}).
-
-🕐 Вылет запланирован на ${fmtDt(f.expectedDeparture || f.scheduledDeparture)}`;
-
+      return `👋 Уважаемый пассажир!\n\nЗакончилась посадка на рейс ${flight} вылетающий в ${city} (${iata}).\n\n🕐 Вылет запланирован на ${fmtDt(f.expectedDeparture || f.scheduledDeparture)}`;
     case 'delayed':
-      return `👋 Уважаемый пассажир!
-
-⚠️ Вылет вашего рейса ${flight} в ${city} (${iata}) ${fmtDt(f.scheduledDeparture)} задерживается до ${fmtDt(f.expectedDeparture)}.
-
-😔 Приносим извинения за доставленные неудобства!`;
-
+      return `👋 Уважаемый пассажир!\n\n⚠️ Вылет вашего рейса ${flight} в ${city} (${iata}) ${fmtDt(f.scheduledDeparture)} задерживается до ${fmtDt(f.expectedDeparture)}.\n\n😔 Приносим извинения за доставленные неудобства!`;
     case 'cancelled':
-      return `👋 Уважаемый пассажир!
-
-❌ Вылет вашего рейса ${flight} в ${city} (${iata}) отменён.
-
-📞 Обращайтесь в авиакомпанию за подробной информацией.`;
-
+      return `👋 Уважаемый пассажир!\n\n❌ Вылет вашего рейса ${flight} в ${city} (${iata}) отменён.\n\n📞 Обращайтесь в авиакомпанию за подробной информацией.`;
     default:
       return null;
   }
 }
 
-// Клавиатура с выбором даты
-function getDateKeyboard() {
-  return Keyboard.builder()
-    .inline()
-    .textButton({ label: '📅 Сегодня', payload: { cmd: 'date', value: 'today' }, color: Keyboard.PRIMARY_COLOR })
-    .textButton({ label: '📅 Завтра', payload: { cmd: 'date', value: 'tomorrow' }, color: Keyboard.PRIMARY_COLOR });
-}
-
-// Клавиатура "Выбрать дату заново"
-function getBackKeyboard() {
-  return Keyboard.builder()
-    .inline()
-    .textButton({ label: '🔄 Выбрать другую дату', payload: { cmd: 'back' }, color: Keyboard.SECONDARY_COLOR });
-}
-
-// Клавиатура для подписки/отписки
-function getSubscribeKeyboard(flightId, isSubscribed) {
-  const kb = Keyboard.builder().inline();
-  if (isSubscribed) {
-    kb.textButton({ label: '🔕 Отписаться от рейса', payload: { cmd: 'unsub', flightId }, color: Keyboard.NEGATIVE_COLOR });
-  } else {
-    kb.textButton({ label: '🔔 Подписаться на рейс', payload: { cmd: 'sub', flightId }, color: Keyboard.POSITIVE_COLOR });
-  }
-  kb.textButton({ label: '🔄 Выбрать другую дату', payload: { cmd: 'back' }, color: Keyboard.SECONDARY_COLOR });
-  return kb;
-}
-
-// Проверяем, подписан ли пользователь
-function isUserSubscribed(userId, flightId) {
-  return subscriptions[userId] && subscriptions[userId][flightId];
-}
-
-// Поиск рейсов
 function findFlights(flights, query, date) {
   const q = query.trim().toLowerCase();
   return flights.filter(f => {
@@ -172,17 +96,10 @@ function findFlights(flights, query, date) {
   });
 }
 
-// Определяем тип изменения статуса
-function getStatusChangeType(oldStatus, newStatus, f) {
+function getStatusChangeType(oldStatus, newStatus) {
   if (oldStatus === newStatus) return null;
-
-  // Отмена — приоритетнее всего
   if (newStatus === 'cancelled') return 'cancelled';
-
-  // Задержка
   if (newStatus === 'delayed') return 'delayed';
-
-  // Стандартные статусы
   const map = {
     'checkin': 'checkin',
     'checkin_completed': 'checkin_completed',
@@ -192,54 +109,24 @@ function getStatusChangeType(oldStatus, newStatus, f) {
   return map[newStatus] || null;
 }
 
-// ============ ОТПРАВКА УВЕДОМЛЕНИЙ ============
-async function checkSubscriptionsAndNotify() {
-  try {
-    const response = await axios.get(`${API_URL}?showDeparted=false`);
-    const flights = response.data;
+// ============ КЛАВИАТУРЫ ============
+function getDateKeyboard() {
+  return Keyboard.builder().inline()
+    .textButton({ label: '📅 Сегодня', payload: { cmd: 'date', value: 'today' }, color: Keyboard.PRIMARY_COLOR })
+    .textButton({ label: '📅 Завтра', payload: { cmd: 'date', value: 'tomorrow' }, color: Keyboard.PRIMARY_COLOR });
+}
 
-    // Карта рейсов по ID
-    const flightMap = {};
-    flights.forEach(f => { flightMap[f.id] = f; });
+function getBackKeyboard() {
+  return Keyboard.builder().inline()
+    .textButton({ label: '🔄 Выбрать другую дату', payload: { cmd: 'back' }, color: Keyboard.SECONDARY_COLOR });
+}
 
-    for (const userId in subscriptions) {
-      const userSubs = subscriptions[userId];
-      for (const flightId in userSubs) {
-        const flight = flightMap[flightId];
-        if (!flight) continue;
-
-        const currentStatus = flight.computedStatus;
-        const oldStatus = lastStatuses[flightId];
-
-        // Обновляем состояние
-        if (oldStatus !== currentStatus) {
-          lastStatuses[flightId] = currentStatus;
-
-          // Формируем уведомление (только если не первая загрузка)
-          if (oldStatus !== undefined) {
-            const changeType = getStatusChangeType(oldStatus, currentStatus, flight);
-            if (changeType) {
-              const notification = buildNotification(flight, changeType);
-              if (notification) {
-                try {
-                  await vk.api.messages.send({
-                    peer_id: parseInt(userId),
-                    message: notification,
-                    random_id: Date.now() + Math.floor(Math.random() * 1000)
-                  });
-                  console.log(`✅ Уведомление отправлено ${userId} о рейсе ${flightId}: ${changeType}`);
-                } catch (e) {
-                  console.error(`❌ Ошибка отправки ${userId}:`, e.message);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Ошибка проверки подписок:', e.message);
-  }
+function getSubscribeKeyboard(flightId, isSubscribed) {
+  const kb = Keyboard.builder().inline();
+  if (isSubscribed) kb.textButton({ label: '🔕 Отписаться от рейса', payload: { cmd: 'unsub', flightId }, color: Keyboard.NEGATIVE_COLOR });
+  else kb.textButton({ label: '🔔 Подписаться на рейс', payload: { cmd: 'sub', flightId }, color: Keyboard.POSITIVE_COLOR });
+  kb.textButton({ label: '🔄 Выбрать другую дату', payload: { cmd: 'back' }, color: Keyboard.SECONDARY_COLOR });
+  return kb;
 }
 
 // ============ ОБРАБОТКА СООБЩЕНИЙ ============
@@ -248,102 +135,69 @@ vk.updates.on('message_new', async (context) => {
   const text = (context.text || '').trim();
   const payload = context.messagePayload;
 
-  // Обработка кнопок
   if (payload) {
-    // Выбор даты
     if (payload.cmd === 'date') {
       userStates[userId] = { step: 'search', date: payload.value };
-      await context.send({
-        message: `🔎 Выбрана дата: ${payload.value === 'today' ? 'Сегодня' : 'Завтра'}\n\nВведите номер рейса, город или код ИАТА (например: SU-1234, Москва, SVO):`,
-        keyboard: getBackKeyboard().toString()
-      });
+      await context.send({ message: `🔎 Выбрана дата: ${payload.value === 'today' ? 'Сегодня' : 'Завтра'}\n\nВведите номер рейса, город или код ИАТА (например: SU-1234, Москва, SVO):`, keyboard: getBackKeyboard().toString() });
       return;
     }
-
-    // Назад к выбору даты
     if (payload.cmd === 'back') {
       userStates[userId] = { step: 'date' };
-      await context.send({
-        message: '📅 Выберите дату:',
-        keyboard: getDateKeyboard().toString()
-      });
+      await context.send({ message: '📅 Выберите дату:', keyboard: getDateKeyboard().toString() });
       return;
     }
-
-    // Подписка
     if (payload.cmd === 'sub') {
       if (!subscriptions[userId]) subscriptions[userId] = {};
       subscriptions[userId][payload.flightId] = true;
-
-      // Запоминаем текущий статус
       try {
         const r = await axios.get(`${API_URL}?showDeparted=false`);
         const f = r.data.find(x => x.id === payload.flightId);
-        if (f) lastStatuses[payload.flightId] = f.computedStatus;
+        if (f) {
+          lastFlightStates[payload.flightId] = {
+            status: f.computedStatus,
+            expected: f.expectedDeparture || null
+          };
+        }
       } catch (e) {}
-
-      await context.send({
-        message: `🔔 Вы подписались на рейс.\n\nЯ буду присылать вам уведомления при:\n• начале регистрации\n• окончании регистрации\n• начале посадки\n• окончании посадки\n• задержке\n• отмене рейса`,
-        keyboard: getSubscribeKeyboard(payload.flightId, true).toString()
-      });
+      await context.send({ message: `🔔 Вы подписались на рейс.\n\nЯ буду присылать вам уведомления при:\n• начале регистрации\n• окончании регистрации\n• начале посадки\n• окончании посадки\n• задержке\n• отмене рейса`, keyboard: getSubscribeKeyboard(payload.flightId, true).toString() });
       return;
     }
-
-    // Отписка
     if (payload.cmd === 'unsub') {
       if (subscriptions[userId] && subscriptions[userId][payload.flightId]) {
         delete subscriptions[userId][payload.flightId];
-        if (Object.keys(subscriptions[userId]).length === 0) {
-          delete subscriptions[userId];
-        }
+        if (Object.keys(subscriptions[userId]).length === 0) delete subscriptions[userId];
       }
-      await context.send({
-        message: `🔕 Вы отписались от уведомлений по этому рейсу.`,
-        keyboard: getSubscribeKeyboard(payload.flightId, false).toString()
-      });
+      await context.send({ message: `🔕 Вы отписались от уведомлений по этому рейсу.`, keyboard: getSubscribeKeyboard(payload.flightId, false).toString() });
       return;
     }
   }
 
-  // Команды
   const lowerText = text.toLowerCase();
-  if (lowerText === 'начать' || lowerText === 'start' || lowerText === '/start' || lowerText === 'привет' || lowerText === 'меню') {
+  if (['начать', 'start', '/start', 'привет', 'меню'].includes(lowerText)) {
     userStates[userId] = { step: 'date' };
-    await context.send({
-      message: `👋 Добро пожаловать в бота информации о статусе рейсов в аэропорту "Симашкино".\n\nПожалуйста, выберите в кнопке ниже дату, на которую вас интересует статус рейса.`,
-      keyboard: getDateKeyboard().toString()
-    });
+    await context.send({ message: `👋 Добро пожаловать в бота информации о статусе рейсов в аэропорту "Симашкино".\n\nПожалуйста, выберите в кнопке ниже дату, на которую вас интересует статус рейса.`, keyboard: getDateKeyboard().toString() });
     return;
   }
 
-  // Проверяем состояние
   const state = userStates[userId];
   if (!state || state.step !== 'search') {
     userStates[userId] = { step: 'date' };
-    await context.send({
-      message: `👋 Добро пожаловать в бота информации о статусе рейсов в аэропорту "Симашкино".\n\nПожалуйста, выберите в кнопке ниже дату, на которую вас интересует статус рейса.`,
-      keyboard: getDateKeyboard().toString()
-    });
+    await context.send({ message: `👋 Добро пожаловать! Пожалуйста, выберите дату:`, keyboard: getDateKeyboard().toString() });
     return;
   }
 
-  // Поиск рейса
   try {
     const response = await axios.get(`${API_URL}?showDeparted=false`);
     const flights = response.data;
     const found = findFlights(flights, text, state.date);
 
     if (found.length === 0) {
-      await context.send({
-        message: `😔 К сожалению, рейс «${text}» не найден.\n\nПопробуйте ввести другой номер рейса, город или код ИАТА:`,
-        keyboard: getBackKeyboard().toString()
-      });
+      await context.send({ message: `😔 К сожалению, рейс «${text}» не найден.\n\nПопробуйте ввести другой номер рейса, город или код ИАТА:`, keyboard: getBackKeyboard().toString() });
       return;
     }
 
-    // Отправляем информацию о найденных рейсах
     const first = found[0];
-    const subscribed = isUserSubscribed(userId, first.id);
+    const subscribed = subscriptions[userId] && subscriptions[userId][first.id];
 
     let msg = `🔎 Найдено рейсов: ${found.length}\n\n`;
     msg += found.slice(0, 5).map(buildFlightMessage).join('\n\n➖➖➖➖➖\n\n');
@@ -354,36 +208,108 @@ vk.updates.on('message_new', async (context) => {
 
     if (found.length === 1) {
       msg += `\n\n💡 Хотите получать уведомления об изменениях статуса этого рейса? Нажмите кнопку ниже.`;
-      await context.send({
-        message: msg,
-        keyboard: getSubscribeKeyboard(first.id, subscribed).toString()
-      });
+      await context.send({ message: msg, keyboard: getSubscribeKeyboard(first.id, subscribed).toString() });
     } else {
-      await context.send({
-        message: msg,
-        keyboard: getBackKeyboard().toString()
-      });
+      await context.send({ message: msg, keyboard: getBackKeyboard().toString() });
     }
   } catch (e) {
     console.error('Ошибка запроса:', e.message);
-    await context.send({
-      message: '⚠️ Произошла ошибка при получении данных. Попробуйте позже.',
-      keyboard: getBackKeyboard().toString()
-    });
+    await context.send({ message: '⚠️ Произошла ошибка при получении данных. Попробуйте позже.', keyboard: getBackKeyboard().toString() });
   }
 });
 
+// ============ ПРОВЕРКА ПОДПИСОК И УВЕДОМЛЕНИЯ ============
+async function checkSubscriptionsAndNotify() {
+  try {
+    const response = await axios.get(`${API_URL}?showDeparted=false`);
+    const flights = response.data;
+    const flightMap = {};
+    flights.forEach(f => { flightMap[f.id] = f; });
+
+    for (const userId in subscriptions) {
+      for (const flightId in subscriptions[userId]) {
+        const flight = flightMap[flightId];
+        if (!flight) continue;
+
+        const currentStatus = flight.computedStatus;
+        const currentExpected = flight.expectedDeparture || null;
+        const old = lastFlightStates[flightId];
+
+        if (!old) {
+          lastFlightStates[flightId] = { status: currentStatus, expected: currentExpected };
+          continue;
+        }
+
+        // ============ ПРОВЕРКА ЗАДЕРЖКИ ПО ВРЕМЕНИ ============
+        const sched = new Date(flight.scheduledDeparture);
+        const newExp = currentExpected ? new Date(currentExpected) : null;
+        const oldExp = old.expected ? new Date(old.expected) : null;
+
+        const wasDelayed = oldExp && oldExp > sched;
+        const isDelayed = newExp && newExp > sched;
+
+        if (!wasDelayed && isDelayed) {
+          // Только что поставили задержку
+          const notification = buildNotification(flight, 'delayed');
+          if (notification) {
+            try {
+              await vk.api.messages.send({ peer_id: parseInt(userId), message: notification, random_id: Date.now() + Math.floor(Math.random() * 1000) });
+              console.log(`✅ ВК уведомление о задержке ${userId} (${flightId})`);
+            } catch (e) {
+              console.error(`❌ Ошибка ${userId}:`, e.message);
+            }
+          }
+        } else if (wasDelayed && isDelayed && newExp.getTime() !== oldExp.getTime()) {
+          // Задержка уже была, но время изменилось
+          const notification = buildNotification(flight, 'delayed');
+          if (notification) {
+            try {
+              await vk.api.messages.send({ peer_id: parseInt(userId), message: notification, random_id: Date.now() + Math.floor(Math.random() * 1000) });
+              console.log(`✅ ВК уведомление о новой задержке ${userId} (${flightId})`);
+            } catch (e) {
+              console.error(`❌ Ошибка ${userId}:`, e.message);
+            }
+          }
+        } else if (wasDelayed && !isDelayed) {
+          // Задержку убрали
+          const text = `👋 Уважаемый пассажир!\n\n✈️ Хорошие новости! Ваш рейс ${flight.flightNumber} в ${flight.destination} (${flight.iataCode || ''}) снова вылетает по расписанию — ${fmtDt(flight.scheduledDeparture)}.`;
+          try {
+            await vk.api.messages.send({ peer_id: parseInt(userId), message: text, random_id: Date.now() + Math.floor(Math.random() * 1000) });
+          } catch (e) {}
+        }
+
+        // ============ ПРОВЕРКА СМЕНЫ СТАТУСА ============
+        if (old.status !== currentStatus) {
+          const changeType = getStatusChangeType(old.status, currentStatus);
+          if (changeType && changeType !== 'delayed') {
+            const notification = buildNotification(flight, changeType);
+            if (notification) {
+              try {
+                await vk.api.messages.send({ peer_id: parseInt(userId), message: notification, random_id: Date.now() + Math.floor(Math.random() * 1000) });
+                console.log(`✅ ВК уведомление ${userId} (${changeType})`);
+              } catch (e) {
+                console.error(`❌ Ошибка ${userId}:`, e.message);
+              }
+            }
+          }
+        }
+
+        lastFlightStates[flightId] = { status: currentStatus, expected: currentExpected };
+      }
+    }
+  } catch (e) {
+    console.error('ВК проверка подписок:', e.message);
+  }
+}
+
 // ============ ЗАПУСК ============
-console.log('🚀 Бот аэропорта Симашкино запускается...');
+console.log('🚀 ВК-бот аэропорта Симашкино запускается...');
 
-// Проверка подписок каждую минуту
 setInterval(checkSubscriptionsAndNotify, 60000);
-
-// Первый запуск проверки через 30 секунд (чтобы бот успел запуститься)
 setTimeout(checkSubscriptionsAndNotify, 30000);
 
 vk.updates.start().then(() => {
-  console.log('✅ Бот успешно запущен!');
+  console.log('✅ ВК-бот успешно запущен!');
 }).catch(err => {
   console.error('❌ Ошибка запуска:', err);
 });
